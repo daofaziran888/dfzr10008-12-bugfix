@@ -70,7 +70,7 @@ import { request } from '@/api/client'
 type Row = Record<string, string | number | null>
 
 const ENDPOINT = '/api/usage'
-const columns = ["记录编号", "产品名称", "调用方名称", "调用次数", "平均耗时", "错误次数", "统计周期", "记录状态"]
+const columns = ["记录编号", "产品名称", "调用方名称", "调用次数", "平均耗时", "错误次数", "统计周期", "记录状态", "拒绝原因"]
 const actions = ["汇总数据", "分析效果", "归档记录"]
 const statuses = ["采集中", "已汇总", "已分析", "已归档"]
 const stats = [{"label": "使用记录总数", "value": 0}, {"label": "已分析记录", "value": 0}, {"label": "已归档记录", "value": 0}]

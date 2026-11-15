@@ -58,6 +58,15 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message=message, entry=entry)
 
 
+@router.post("/{entry_id}/admit", response_model=ActionResult)
+def admit_call(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """调用准入判断：按有效期、日调用上限与并发窗口容量放行或拒绝；拒绝时给出原因并记入效果追踪。"""
+    entry, admitted, message = service.admit_call(entry_id, payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=admitted, message=message, entry=entry)
+
+
 @router.get("/export")
 def export_entries() -> dict[str, Any]:
     """导出调用配额控制清单：返回当前过滤条件下的全量数据。"""

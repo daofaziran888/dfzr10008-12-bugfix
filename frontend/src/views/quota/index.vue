@@ -27,6 +27,22 @@
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
     </form>
 
+    <form v-if="showCreate" class="create-panel" @submit.prevent="submitCreate">
+      <h3>登记配额配置</h3>
+      <div class="create-grid">
+        <label v-for="field in createFields" :key="field" class="filter-item">
+          <span>{{ field }}</span>
+          <input v-model="createForm[field]" :placeholder="`请输入${field}`" />
+        </label>
+      </div>
+      <div class="create-actions">
+        <button class="btn primary" type="submit">保存配额配置</button>
+        <button class="btn ghost" type="button" @click="showCreate = false">取消</button>
+      </div>
+    </form>
+
+    <p v-if="receiptMessage" class="receipt-text">{{ receiptMessage }}</p>
+
     <table class="data-table">
       <thead>
         <tr>
@@ -47,6 +63,8 @@
             >
               {{ action }}
             </button>
+            <button class="link" type="button" @click="openDetail(row)">详情</button>
+            <button class="link" type="button" @click="admitCall(row)">模拟调用</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -54,6 +72,35 @@
         </tr>
       </tbody>
     </table>
+
+    <aside v-if="detail" class="detail-panel">
+      <header class="detail-head">
+        <h3>配额配置详情：{{ detail.配置编号 }}</h3>
+        <button class="btn ghost" type="button" @click="detail = null">关闭</button>
+      </header>
+      <dl class="detail-grid">
+        <template v-for="field in detailFields" :key="field">
+          <dt>{{ field }}</dt>
+          <dd>{{ detail[field] ?? '—' }}</dd>
+        </template>
+        <dt>审计单号</dt>
+        <dd>{{ detail.审计单号 ?? '—' }}</dd>
+        <dt>审计轨迹</dt>
+        <dd>
+          <span v-if="!auditTrail.length">—</span>
+          <span v-for="item in auditTrail" :key="item.event" class="audit-item">
+            {{ item.event }}：{{ item.time }}
+          </span>
+        </dd>
+        <dt>并发窗口</dt>
+        <dd>
+          <span v-if="!windowStates.length">暂无调用准入状态</span>
+          <span v-for="state in windowStates" :key="state.调用编号" class="window-item">
+            {{ state.调用编号 }} · {{ state.结果 }}<template v-if="state.拒绝原因">（{{ state.拒绝原因 }}）</template>
+          </span>
+        </dd>
+      </dl>
+    </aside>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条调用配额控制记录</span>
@@ -63,23 +110,40 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
-type Row = Record<string, string | number | null>
+type Row = Record<string, any>
 
 const ENDPOINT = '/api/quota'
 const columns = ["配置编号", "调用方名称", "每秒上限", "日调用上限", "并发限制", "超限策略", "有效期至", "配额状态"]
 const actions = ["生效配额", "调整配额", "取消配额"]
-const statuses = ["草稿", "已生效", "已超额", "已过期"]
-const stats = [{"label": "配额配置总数", "value": 0}, {"label": "已生效配额", "value": 0}, {"label": "已超额配额", "value": 0}]
+const createFields = ["配置编号", "调用方名称", "每秒上限", "日调用上限", "并发限制", "超限策略", "有效期至"]
+const detailFields = ["配置编号", "调用方名称", "每秒上限", "日调用上限", "并发限制", "超限策略", "有效期至", "配额状态"]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const receiptMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const showCreate = ref(false)
+const createForm = ref<Record<string, string>>({})
+const detail = ref<Row | null>(null)
+
+const stats = computed(() => [
+  { label: '配额配置总数', value: total.value },
+  { label: '已生效配额', value: rows.value.filter((row) => row.配额状态 === '已生效').length },
+  { label: '已超额配额', value: rows.value.filter((row) => row.配额状态 === '已超额').length },
+])
+
+const auditTrail = computed(() => {
+  const trail = (detail.value?.审计轨迹 ?? {}) as Record<string, string>
+  return Object.entries(trail).map(([event, time]) => ({ event, time }))
+})
+
+const windowStates = computed(() => (detail.value?.并发窗口 ?? []) as Row[])
 
 function resetFilters() {
   filters.value = {}
@@ -91,22 +155,79 @@ function exportRows() {
 }
 
 function openCreate() {
-  errorMessage.value = '配额配置登记入口尚未接入审批流'
+  createForm.value = {}
+  showCreate.value = true
+}
+
+async function submitCreate() {
+  errorMessage.value = ''
+  receiptMessage.value = ''
+  try {
+    const response = await request(ENDPOINT, {
+      method: 'POST',
+      body: JSON.stringify({ values: { ...createForm.value } }),
+    })
+    const payload = await response.json()
+    if (!payload.ok) {
+      throw new Error(payload.message || '配额配置登记失败')
+    }
+    receiptMessage.value = payload.message || '配额配置已登记'
+    showCreate.value = false
+    await reload()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '配额配置登记失败'
+  }
 }
 
 async function runAction(action: string, row: Row) {
   errorMessage.value = ''
+  receiptMessage.value = ''
   try {
     const response = await request(`${ENDPOINT}/${row.id}/actions`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ values: { action } }),
     })
-    if (!response.ok) {
-      throw new Error('调用配额控制动作未生效，请稍后重试')
+    const payload = await response.json()
+    if (!payload.ok) {
+      throw new Error(payload.message || '调用配额控制动作未生效，请稍后重试')
     }
+    receiptMessage.value = payload.message || `配额配置已${action}`
     await reload()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '调用配额控制操作失败'
+  }
+}
+
+async function openDetail(row: Row) {
+  errorMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/${row.id}`)
+    if (!response.ok) {
+      throw new Error('配额配置详情读取失败')
+    }
+    detail.value = await response.json()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '配额配置详情读取失败'
+  }
+}
+
+async function admitCall(row: Row) {
+  errorMessage.value = ''
+  receiptMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/${row.id}/admit`, {
+      method: 'POST',
+      body: JSON.stringify({ values: {} }),
+    })
+    const payload = await response.json()
+    if (!payload.ok) {
+      errorMessage.value = payload.message || '调用被拒绝'
+    } else {
+      receiptMessage.value = payload.message || '调用已放行'
+    }
+    await reload()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '调用准入判断失败'
   }
 }
 
@@ -128,3 +249,65 @@ async function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.create-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+.create-panel h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.create-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.create-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.receipt-text {
+  color: #067647;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.detail-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 12px;
+}
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.detail-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.detail-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+  margin: 12px 0 0;
+}
+.detail-grid dt {
+  color: var(--muted);
+}
+.detail-grid dd {
+  margin: 0;
+}
+.audit-item,
+.window-item {
+  display: block;
+}
+</style>

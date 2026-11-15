@@ -1,6 +1,7 @@
 """使用效果追踪业务规则：状态流转、字段校验与筛选口径都收在这里。"""
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from app.store import store
@@ -45,6 +46,28 @@ class UsageService:
         entry["abnormal"] = False
         rows.append(entry)
         return entry, []
+
+    def record_call(self, *, product: str, caller: str, success: bool, reason: str = "") -> dict[str, Any]:
+        """记录一次调用准入结果：放行的计成功，被拒绝的记拒绝原因而不是成功计数。"""
+        rows = store.rows(MODULE)
+        entry_id = max((int(row.get("id", 0)) for row in rows), default=0) + 1
+        entry = {
+            "id": entry_id,
+            "记录编号": f"USAG-{entry_id:04d}",
+            "产品名称": product,
+            "调用方名称": caller,
+            "调用次数": 1 if success else 0,
+            "平均耗时": "0ms",
+            "错误次数": 0 if success else 1,
+            "统计周期": date.today().isoformat(),
+            "记录状态": "成功" if success else "已拒绝",
+            "拒绝原因": "" if success else reason,
+            "status": STATUS_ORDER[0],
+            "pending": True,
+            "abnormal": not success,
+        }
+        rows.append(entry)
+        return entry
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
         entry = store.find(MODULE, entry_id)
